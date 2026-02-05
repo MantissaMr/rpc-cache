@@ -20,12 +20,12 @@ async fn main() {
     // Create a TCP listener 
     let listener = TcpListener::bind(addr)
         .await
-        .unwrap();
+        .expect("Failed to bind to address");
 
     // Start the server
     axum::serve(listener, app)
         .await
-        .unwrap();
+        .expect("Server exited unexpectedly");
 }
 
 async fn health() -> StatusCode {
