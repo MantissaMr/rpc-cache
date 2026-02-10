@@ -1,24 +1,39 @@
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use axum::{
+    Router,
     body::Bytes,
+    extract::State,
     http::StatusCode,
-    response::Response,
-    routing::get, 
-    Router  
+    response::Response, 
+    routing::get  
 };
 use reqwest;
+use std::sync::Arc;
 //use serde_json;
+
+struct AppState {
+    // Shared HTTP client with connection pooling 
+    client: reqwest::Client,
+
+    // TODO: Cache, config, metrics, others
+}
 
 // -- ENTRYPOINT --
 /// 
 #[tokio::main]
 async fn main() {
+    // Create HTTP client once at startup
+    let client = reqwest::Client::new();
+    
+    // Wrap AppState in Arc for Axum 
+    let state = Arc::new(AppState {client});
 
     // Build router 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/", axum::routing::post(proxy));
+        .route("/", axum::routing::post(proxy))
+        .with_state(state);
 
     // Bind to localhost:3000
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -43,9 +58,12 @@ async fn health() -> StatusCode {
 }
 
 // `/` (POST): Proxies the incoming request to an external API and returns the response
-async fn proxy(body: Bytes) -> Result<Response, StatusCode> {
+async fn proxy(
+    State(state): State<Arc<AppState>>, 
+    body: Bytes
+    ) -> Result<Response, StatusCode> {
     
-    let client = reqwest::Client::new();
+    let client = state.client.clone();
     let upstream_url = "https://ethereum.publicnode.com"; // TODO: Make configurable via a CLI flag later
 
     // TODO(refactor): Create one Client at startup, wrap it in Arc, inject it into the Axum router state
