@@ -1,5 +1,8 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use axum::{
     Router,
     body::Bytes,
@@ -9,7 +12,8 @@ use axum::{
     routing::get  
 };
 use reqwest;
-use std::sync::Arc;
+
+
 //use serde_json;
 
 struct AppState {
@@ -35,7 +39,10 @@ async fn main() {
     let client = reqwest::Client::new();
     
     // Wrap AppState in Arc for Axum 
-    let state = Arc::new(AppState {client});
+    let state = Arc::new(AppState {
+        client: client,
+        cache: Arc::new(RwLock::new(HashMap::new())),
+    });
 
     // Build router 
     let app = Router::new()
@@ -91,7 +98,7 @@ async fn proxy(
     let upstream_response = client
         .post(upstream_url)
         .header("content-type", "application/json")
-        .body(body)
+        .body(body.clone())
         .send()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
