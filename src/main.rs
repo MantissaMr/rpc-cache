@@ -16,7 +16,15 @@ struct AppState {
     // Shared HTTP client with connection pooling 
     client: reqwest::Client,
 
-    // TODO: Cache, config, metrics, others
+    // Key: Bytes (The raw request body)
+    // Value: CacheEntry (The response saved)
+    cache: Arc<tokio::sync::RwLock<std::collections::HashMap<Bytes, CacheEntry>>>,
+}
+
+#[derive(Clone)]
+struct CacheEntry {
+    body: Bytes,
+    content_type: String,
 }
 
 // -- ENTRYPOINT --
@@ -63,12 +71,22 @@ async fn proxy(
     body: Bytes
     ) -> Result<Response, StatusCode> {
     
+    // READ PATH - Check if the request body exists in cache
+    {
+        let read_guard = state.cache.read().await;
+        if let Some(entry) = read_guard.get(&body) {
+            // [HIT] Return cached response
+            return Ok (Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", &entry.content_type)
+                .body(axum::body::Body::from(entry.body.clone()))
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
+        }
+    }
+
+    // NETWORK PATH: Cache Miss -> Forward to Upstream -> Return Response
     let client = state.client.clone();
     let upstream_url = "https://ethereum.publicnode.com"; // TODO: Make configurable via a CLI flag later
-
-    // TODO(refactor): Create one Client at startup, wrap it in Arc, inject it into the Axum router state
-    // Every request handler clones the Arc and shares the same connection pool
-
     
     let upstream_response = client
         .post(upstream_url)
@@ -92,6 +110,18 @@ async fn proxy(
         .bytes()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    // WRITE PATH: Save the response in cache for future requests
+    {
+        let mut write_guard = state.cache.write().await;
+        write_guard.insert(
+            body, // Key
+            CacheEntry { 
+                body: response_bytes.clone(), // Value (cloned so we can also return it below)
+                content_type: content_type.clone() 
+            }
+        );
+    }
 
     // Construct response and return to client
     let response = axum::response::Response::builder()
